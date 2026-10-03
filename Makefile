@@ -53,7 +53,8 @@ DATA := $(BUILD)/potential_169_exact.csv \
         $(BUILD)/equity_169_vs_1to8_mc_seed2.csv \
         $(BUILD)/headsup_169x169_exact.csv \
         $(BUILD)/hand_ranking_exact.csv \
-        $(BUILD)/beaten_at_least_one.csv
+        $(BUILD)/beaten_at_least_one.csv \
+        $(BUILD)/allin_call_exact.csv
 
 # Worker threads for the head-to-head matrix, the only step that is
 # parallelised and the only one long enough to need it.
@@ -141,6 +142,13 @@ $(BUILD)/beaten_at_least_one.csv: $(BIN)/beaten $(BUILD)/headsup_169_vs_1225_exa
 $(BUILD)/hand_ranking_exact.csv $(BUILD)/equity_169_vs_ranges_exact.csv: \
         tools/derive_ranges.py $(BUILD)/headsup_169x169_exact.csv
 	$(PYTHON) tools/derive_ranges.py
+
+# Derived: the all-in decision. Exact equities from the matrix, combined with
+# pot odds. Prints its verdict on the "call with JJ+ and AK" rule.
+$(BUILD)/allin_call_exact.csv $(BUILD)/allin_shove_exact.csv: \
+        tools/derive_allin.py $(BUILD)/headsup_169x169_exact.csv \
+        $(BUILD)/hand_ranking_exact.csv
+	$(PYTHON) tools/derive_allin.py
 
 verify: $(DATA)
 	$(PYTHON) tools/verify_reproduction.py
