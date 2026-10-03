@@ -24,6 +24,10 @@ repository is the engine and the research behind it.
 | `equity_169_vs_random_exact.csv` | Exact | What each hand is worth against one opponent holding a random hand, aggregated from the matrix |
 | `hand_ranking_exact.csv` | Exact | The 169 hands ordered by equity against a random hand, with the cumulative share that defines the top X% ranges |
 | `equity_169_vs_ranges_exact.csv` | Exact | What each hand is worth against an opponent playing the top 5, 10, 15, 20, 30, 50 or 100% of hands |
+| `headsup_169_vs_1225_exact.csv` | Exact | Every distinct matchup: each hand against each of the 1,225 hands an opponent can hold |
+| `equity_landscape_169_exact.csv` | Exact | The shape of that distribution per hand: how many opponent hands beat it, split with it, lose to it, and the spread in bands |
+| `beaten_by_k.csv` | Both | How many of n opponents hold a beating hand. Exact for 1 to 4 opponents, estimated for 5 to 8 |
+| `beaten_at_least_one.csv` | Both | The chance at least one of n opponents beats you, next to the independence shortcut it replaces |
 | `equity_169_vs_1to8_mc.csv` | Estimated | What each hand is worth against 1 to 8 opponents holding random hands, with wins, ties and losses counted separately |
 
 **Potential is not the probability of winning.** Potential says how often a
@@ -45,8 +49,8 @@ make data       # the tables, into build/
 make verify     # compare build/ against exploration/ and across seeds
 ```
 
-A full run from `make clean` takes about **11 minutes** on an Apple M1, of
-which 8 are the exact head-to-head matrix, the only step that is
+A full run from `make clean` takes about **18 minutes** on an Apple M1, of
+which 16 are the exact head-to-head matrix, the only step that is
 parallelised. Monte Carlo runs record their trial count and seed in the
 output, so any table can be reproduced exactly:
 
@@ -97,15 +101,32 @@ cannot leave a plausible-looking CSV behind.
   value, at all eight table sizes, within sampling error. This constrains all
   169 hands jointly and catches a biased shuffle or a mis-weighted average,
   which per-hand plausibility would not.
-- *The exact matrix:* five invariants, all in integer arithmetic, because
+- *The exact matrix:* six invariants, all in integer arithmetic, because
   nothing in the matrix is estimated and so there is no tolerance to choose.
   A pair of types must have the same number of deals read in either
   direction; every hand must face all 1,225 opponent hands; wins, ties and
-  losses must account for every board of every deal; a hand against its own
-  type must win and lose equally often, so it is worth exactly half the pot;
-  and the whole matrix must average to exactly one half, since neither of two
-  random hands has an advantage. The last one is checked as an equality
-  between two integers, both 2,781,381,002,400.
+  losses must account for every board of every deal; the matrix must be its
+  own mirror; a hand against its own type must win and lose equally often, so
+  it is worth exactly half the pot; and the whole matrix must average to
+  exactly one half, since neither of two random hands has an advantage. The
+  last one is checked as an equality between two integers, both
+  2,781,381,002,400.
+
+  The mirror check is worth a word, because it costs half the running time.
+  A against B gives B against A by swapping wins and losses, so half the
+  matrix could be copied rather than computed, in four minutes instead of
+  fourteen. Both halves are enumerated instead, and the mirror relation is
+  then a **check** rather than an assumption: the two halves are genuinely
+  different calculations, since A's representative against concrete hands of
+  type B uses different cards from B's representative against concrete hands
+  of type A, so their agreement in all 14,196 mirrored pairs tests the suit
+  isomorphism, the orbit weighting and the scaling at once. Copying would have
+  tested none of them.
+- *How many opponents beat you:* the inclusion-exclusion is checked against
+  brute force, which shares none of its reasoning — every deal walked and
+  classified one at a time. They agree exactly for two opponents on all 169
+  hands, and for three opponents on four sampled hands at 300 million deals
+  each.
 
 **And then, from outside.** `make verify` compares the engine against the
 earlier exploration phase under `exploration/`, which was written
@@ -132,6 +153,23 @@ quoted to — AA at 85.204%, AKo at 65.320%, 72o at 34.584% — with a widest ga
 of 0.045 percentage points. That ties the whole chain, evaluator through suit
 isomorphism through weighting, to other people's code.
 
+**Against code written by other people.** `make crosscheck` enumerates all
+1,712,304 boards of seven chosen matchups with [treys](https://pypi.org/project/treys/),
+an independent evaluator, and compares **wins, ties and losses as exact
+integers** — not the equity, which could agree by luck while the three counts
+are wrong. The matchups are chosen for what is most likely to break: a
+dominated hand where kickers decide nearly every board, the same two hand
+types in two suit arrangements, matchups turning on flushes and on the wheel,
+and a pair against two overcards where ties are common enough to catch one
+miscounted as a win. All seven agree on every count.
+
+That check is also what caught my own wrong assumption. AKo against AA comes
+out at 6.53% or 7.43% depending on the suits, and I expected about 12% from
+memory. The engine was right and the memory was wrong: pairing the king does
+not help, because a pair of kings loses to the pair of aces, so the hand is
+drawing to a straight, a flush or trips. Had I trusted the recollection over
+the check, I would have gone looking for a bug that was not there.
+
 ## Layout
 
 | Path | What it holds |
@@ -143,10 +181,12 @@ isomorphism through weighting, to other people's code.
 | `src/test_eval7.c` | The evaluator's test suite |
 | `src/suits.h` | Renaming suits: the symmetry that makes the exact matrix feasible |
 | `src/potential.c` | Exact potential of the 169 hands |
-| `src/headsup.c` | The exact 169 x 169 head-to-head matrix |
+| `src/headsup.c` | The exact 169 x 169 head-to-head matrix, and every distinct matchup |
+| `src/beaten.c` | How many opponents hold a hand that beats yours |
 | `tools/derive_ranges.py` | The hand ranking and the top X% ranges, derived from the matrix in exact rational arithmetic |
 | `src/equity_mc.c` | Monte Carlo equity against 1 to 8 opponents |
 | `tools/verify_reproduction.py` | Checks the output against `exploration/` and across seeds |
+| `tools/crosscheck_treys.py` | Checks individual matchups against treys, an outside evaluator |
 | `exploration/` | The first exploration phase, kept for provenance |
 | `build/` | Generated tables. Not tracked: rebuild with `make data` |
 
@@ -211,6 +251,56 @@ aggregated, not a separate calculation, so the two files cannot disagree.
 | `equity` | Exact equity against one opponent holding a uniformly random hand |
 | `win_rate`, `tie_rate` | Wins and ties as fractions of `boards`. Reported alongside equity because a hand that wins less but ties more is a different hand, and the single equity figure hides that: 98s and 22 are worth almost the same (50.80% against 50.33%) but 98s ties twice as often |
 
+### `headsup_169_vs_1225_exact.csv`
+
+One row per distinct matchup, 93,769 rows, 5 MB. Exact.
+
+Behind "AKs is worth 67% against a random hand" are 1,225 specific opponent
+hands, and the average hides the shape of what it averages. This file is the
+shape: every hand against every hand an opponent can hold.
+
+| Column | Meaning |
+| --- | --- |
+| `hero` | The hand type, computed from its representative cards |
+| `opponent_cards` | The specific two cards, e.g. `AhAs` |
+| `opponent_hand` | Their hand type |
+| `stands_for` | How many of the 1,225 opponent hands this row speaks for. Opponent hands that renaming the unused suits maps onto each other have identical equity against the hero, so they share a row. Summing this across a hero's rows gives exactly 1,225 |
+| `boards`, `wins`, `ties`, `losses`, `equity` | Over the 1,712,304 boards of one matchup. Unscaled, unlike the matrix file, which is the scaled aggregate of these |
+
+### `equity_landscape_169_exact.csv`, `beaten_by_k.csv` and `beaten_at_least_one.csv`
+
+"What are the chances somebody has a better hand than me?" has no answer
+preflop until it is given a definition, because hand strength is only decided
+once the board is out. The definition used here:
+
+> An opponent hand **beats** yours when your exact equity against that
+> specific hand is below one half.
+
+That is a statement about the long run against one hand, not a prediction
+about this pot, and it throws away *how far* below one half: a hand you beat
+49.9% of the time counts the same as one you beat 20% of the time. Which is
+why `equity_landscape_169_exact.csv` reports the whole distribution in bands
+as well as the classification. The boundary is handled exactly: equity is the
+rational number `(2*wins + ties) / (2*boards)`, so "below one half" is the
+integer test `2*wins + ties < boards`, and hands landing exactly on one half
+are counted separately rather than pushed to one side. They are real — they
+are the hands that mirror yours, such as AcKc against AdKd.
+
+The multiple-opponent version is where it gets hard, and that is the point of
+these files. The familiar shortcut `1 - (1-p)^n` assumes the opponents' hands
+are independent, and they are not: they come out of one deck. The right answer
+needs the number of ways to deal n card-disjoint hands with exactly k of them
+beating you, which is counting matchings of size n in a graph on the 50
+remaining cards — a known hard problem, with on the order of 10^17 of them at
+n = 8. So it is **exact for 1 to 4 opponents** by inclusion-exclusion, and
+**estimated with standard errors for 5 to 8**. That boundary is where the
+method runs out, not where patience does: reaching five would mean enumerating
+disjoint sets of four beating hands, about 90 billion steps per starting hand.
+
+`beaten_at_least_one.csv` puts the right answer next to the shortcut and
+records the gap in percentage points, so the cost of assuming independence is
+a column rather than a claim.
+
 ### `hand_ranking_exact.csv` and `equity_169_vs_ranges_exact.csv`
 
 The ranking orders the 169 types by exact equity against a random hand, and
@@ -254,8 +344,6 @@ place where that difference is actually priced.
 
 ## Still to come
 
-- The distribution of how many opponents hold a hand that beats yours, without
-  assuming independence between their hands.
 - The preflop all-in decision: expected value with dead money, effective
   stacks, and the probability that everyone folds as a parameter rather than a
   guess.
