@@ -20,6 +20,7 @@ repository is the engine and the research behind it.
 | Table | Kind | What it says |
 | --- | --- | --- |
 | `potential_169_exact.csv` | Exact | How often each of the 169 starting hands finishes in each of the nine hand categories, over all 2,118,760 boards |
+| `potential_refined_169_exact.csv` | Exact | The same, plus what the hand would be if it had to use one of your own cards, and what kind of improvement your cards actually made |
 | `headsup_169x169_exact.csv` | Exact | Wins, ties and losses for every ordered pair of starting hands, over every board. All 28,561 cells |
 | `equity_169_vs_random_exact.csv` | Exact | What each hand is worth against one opponent holding a random hand, aggregated from the matrix |
 | `hand_ranking_exact.csv` | Exact | The 169 hands ordered by equity against a random hand, with the cumulative share that defines the top X% ranges |
@@ -155,6 +156,17 @@ quoted to — AA at 85.204%, AKo at 65.320%, 72o at 34.584% — with a widest ga
 of 0.045 percentage points. That ties the whole chain, evaluator through suit
 isomorphism through weighting, to other people's code.
 
+**Does more simulation actually help?** `make convergence` runs the simulation
+at 25,000, 100,000 and 400,000 trials and measures the root-mean-square error
+of the one-opponent column against the exact values from the matrix. Sampling
+error should fall as one over the square root of the trials, so quadrupling
+them should halve it. It does: 0.3031, 0.1662 and 0.0757 percentage points,
+ratios of 1.82 and 2.20 against 2.00 predicted. At each trial count the error
+the runs actually have is within 10% of the error they report. A simulation
+that had stopped improving — a biased generator, a shuffle not reaching every
+deal, an accumulator losing precision — would show a ratio drifting towards 1
+while every individual run still looked fine.
+
 **Against code written by other people.** `make crosscheck` enumerates all
 1,712,304 boards of seven chosen matchups with [treys](https://pypi.org/project/treys/),
 an independent evaluator, and compares **wins, ties and losses as exact
@@ -184,12 +196,14 @@ the check, I would have gone looking for a bug that was not there.
 | `src/suits.h` | Renaming suits: the symmetry that makes the exact matrix feasible |
 | `src/potential.c` | Exact potential of the 169 hands |
 | `src/headsup.c` | The exact 169 x 169 head-to-head matrix, and every distinct matchup |
+| `src/refined_potential.c` | The potential your own two cards are responsible for |
 | `src/beaten.c` | How many opponents hold a hand that beats yours |
 | `tools/derive_ranges.py` | The hand ranking and the top X% ranges, derived from the matrix in exact rational arithmetic |
 | `tools/derive_allin.py` | The all-in decision, and the verdict on the "JJ+ and AK" rule |
 | `src/equity_mc.c` | Monte Carlo equity against 1 to 8 opponents |
 | `tools/verify_reproduction.py` | Checks the output against `exploration/` and across seeds |
 | `tools/crosscheck_treys.py` | Checks individual matchups against treys, an outside evaluator |
+| `tools/convergence_test.py` | Measures the simulation's error against the exact answers at three trial counts |
 | `exploration/` | The first exploration phase, kept for provenance |
 | `build/` | Generated tables. Not tracked: rebuild with `make data` |
 
@@ -212,7 +226,7 @@ C(50,5) = 2,118,760 boards that can follow that hand.
 | `combos` | How many of the 1,326 concrete starting hands this type stands for: 6, 4 or 12. Use it as the weight when averaging over the 169 types |
 | `boards` | Always 2,118,760, the denominator for every count in the row |
 | `high_card` … `straight_flush` | Boards on which the player's best five cards finish in that category. The nine are mutually exclusive and sum to `boards` |
-| `improves_board` | Boards where the player's cards raise the category the board makes on its own. **Approximate:** it misses improvements inside one category, such as holding a higher flush than the board, so it understates how often the player's cards matter |
+| `improves_board` | Boards where the player's cards raise the category the board makes on its own. **Superseded:** it misses improvements inside one category, such as holding a higher flush than the board. `potential_refined_169_exact.csv` replaces it with a four-way split that does not. Kept because the exploration phase published it |
 
 ### `equity_169_vs_1to8_mc.csv`
 
@@ -395,6 +409,57 @@ equilibrium problem for the push-or-fold game, and this file does not solve
 it. It answers what a play is worth against *that* opponent, which is a more
 modest question.
 
+### `potential_refined_169_exact.csv`
+
+Plain potential flatters weak hands. 72o reaches two pair or better on 34% of
+boards, which sounds playable and is not, because most of those are two pair
+sitting on the board, which everyone else at the table has too. This file
+measures what your own two cards are responsible for, two different ways, and
+the first of the two mostly fails — which is itself the finding.
+
+**What the hand would be if it had to use one of your cards.** The columns
+`hole_*` give the category of the best five cards that includes at least one
+card only you hold. This barely differs from plain potential: 72o's two pair
+or better goes from 34.24% to 34.04%, and the largest gap across all 169 hands
+is 0.41 points. The reason is that "uses one of your cards" is satisfied by a
+card riding along as a kicker — the board's two pair plus your seven as the
+fifth card uses your seven. So the suspicion that a weak hand's potential is
+mostly the board's turns out to be **wrong as stated**, and these columns are
+published to show that rather than to be used.
+
+**What kind of improvement your cards made.** This is the measure that works,
+and it is the one the exploration phase asked for: a metric that notices
+improvements inside a category, such as holding a king-high flush where the
+board alone makes a nine-high flush. Every board sorts into exactly one of
+four buckets, read straight off the score layout:
+
+| Column | Meaning |
+| --- | --- |
+| `raises_category` | Your cards give you a better category than the board makes on its own |
+| `raises_defining_rank` | Same category, but your combination is bigger: a higher pair, a higher flush, a higher straight |
+| `improves_kicker_only` | Same category and the same defining rank, but a better side card. Your cards decide a pot between two players who both have the board's hand, and nothing more |
+| `no_improvement` | The board's hand is your hand |
+
+The split matters because lumping the middle two together is misleading in
+both directions, and the sharpest result in this file depends on it:
+
+> **AA and 22 raise the board's category exactly equally often, 94.72% of the
+> time. But AA goes on to beat the board's own combination 4.61% of the time,
+> and 22 does so 0.00% of the time.**
+
+A deuce is never a bigger pair than the board's pair and never a useful
+kicker, so a pocket pair of deuces either makes the category or contributes
+nothing at all — 5.28% of boards it does nothing, against 0.50% for aces. That
+is the measured version of the exploration phase's erratum that not all pocket
+pairs are alike, and it is sharper than the straight/flush argument that
+erratum was based on.
+
+Elsewhere the kicker column is where most hands live: T2o improves on the
+board by a kicker alone on 45.34% of boards, which is most of what it does.
+And 32o fails to improve on the board at all on **47.33%** of boards, against
+9.13% for 72o, because a three and a deuce lose to the board's own side cards
+while a seven often plays as one.
+
 ## What this model assumes, and does not
 
 Opponents are dealt **uniformly random hands** and every hand goes to the
@@ -415,5 +480,3 @@ place where that difference is actually priced.
 
 ## Still to come
 
-- A refined potential that requires at least one of the player's own cards to
-  play, which is what `improves_board` only approximates today.
