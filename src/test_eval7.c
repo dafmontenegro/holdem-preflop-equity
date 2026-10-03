@@ -402,6 +402,14 @@ static void test_all_seven_card_hands(void)
 
     long long counts[NUM_CATEGORIES] = { 0 };
 
+    /* The same loop also checks the two ways of reaching a score against each
+     * other. The exact calculations summarise a board once and add each
+     * player's two cards to a copy, instead of reading all seven cards; that
+     * shortcut carries most of the engine's running time, so it is checked on
+     * every hand in the deck rather than on a sample. The first five cards
+     * stand in for the board and the last two for the player's own. */
+    long long summary_path_disagreements = 0;
+
     int cards[7];
     for (int a = 0;     a < NUM_CARDS; a++)
     for (int b = a + 1; b < NUM_CARDS; b++)
@@ -413,10 +421,28 @@ static void test_all_seven_card_hands(void)
         cards[0] = a; cards[1] = b; cards[2] = c; cards[3] = d;
         cards[4] = e; cards[5] = f; cards[6] = g;
 
-        counts[score_category(hand_score(cards, 7))]++;
+        int score = hand_score(cards, 7);
+        counts[score_category(score)]++;
+
+        struct card_summary board;
+        card_summary_init(&board);
+        card_summary_add_cards(&board, cards, 5);
+
+        struct card_summary with_hole = board;
+        card_summary_add(&with_hole, cards[5]);
+        card_summary_add(&with_hole, cards[6]);
+
+        if (score_summary(&with_hole) != score)
+            summary_path_disagreements++;
     }
 
     compare_counts(counts, SEVEN_CARD_COUNTS, 133784560, "seven-card hands");
+
+    check(summary_path_disagreements == 0,
+          "seven-card hands: adding cards to a board summary gives the same score "
+          "as reading all seven");
+    if (summary_path_disagreements != 0)
+        printf("         %lld hands disagreed\n", summary_path_disagreements);
 }
 
 int main(void)

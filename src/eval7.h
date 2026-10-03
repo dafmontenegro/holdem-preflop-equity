@@ -70,6 +70,11 @@
 
 /* Hand categories, weakest to strongest. The numbering is the one used by the
  * exploration phase and by the published tables, so the two can be compared. */
+/* Sizes of the summary tables. They match NUM_RANKS and NUM_SUITS in cards.h;
+ * they are restated here so this header stands on its own. */
+#define NUM_RANKS_IN_SUMMARY 13
+#define NUM_SUITS_IN_SUMMARY  4
+
 enum hand_category {
     CAT_HIGH_CARD      = 0,
     CAT_PAIR           = 1,
@@ -93,6 +98,63 @@ extern const char *const CATEGORY_NAMES[NUM_CATEGORIES];
  * returns the score of a hand that cannot be dealt.
  */
 int hand_score(const int *cards, int count);
+
+/* THE SUMMARY, AND WHY IT IS PART OF THE INTERFACE
+ * ------------------------------------------------
+ * Scoring a hand never looks at the cards one by one twice. It first reduces
+ * them to four small tables — how many of each rank, how many of each suit,
+ * which ranks are present, and which ranks are present within each suit — and
+ * every question after that is asked of those tables.
+ *
+ * That reduction is exposed here because of how the exact calculations use
+ * it. Two players in a showdown share the same five board cards, and a
+ * head-to-head enumeration walks millions of boards: summarising the board
+ * once and then adding each player's two cards to a copy does the work of
+ * reading five cards once instead of twice, every board. Over the 161 billion
+ * evaluations of the 169 x 169 matrix that is not a micro-optimisation, it is
+ * most of the running time.
+ *
+ * A summary must describe between 5 and 7 cards. The evaluator relies on that
+ * range in one place: it assumes at most one suit can hold five cards, which
+ * is true up to seven cards and false from ten.
+ */
+/* Every field is a 13-bit mask over ranks, or a small per-suit count. Holding
+ * the rank information as four nested masks rather than as a table of counts
+ * is what lets the evaluator find the quads, trips, pairs and kickers of a
+ * hand with single bit-scan instructions instead of walking all 13 ranks, and
+ * it keeps the summary small enough that copying one is nearly free. Both
+ * matter: the exact matrix copies a summary and scores it 322 billion times.
+ *
+ * The four rank masks are nested, each one a subset of the one above:
+ *
+ *     present      rank appears at least once
+ *     two_plus     rank appears at least twice
+ *     three_plus   rank appears at least three times
+ *     four         rank appears four times
+ *
+ * So a rank held exactly twice is in `present` and `two_plus` but not in
+ * `three_plus`. Adding a card walks one step down that ladder, which is why
+ * no counter is needed. */
+struct card_summary {
+    int present;                           /* ranks held at least once      */
+    int two_plus;                          /* ranks held at least twice     */
+    int three_plus;                        /* ranks held at least 3 times   */
+    int four;                              /* ranks held 4 times            */
+    int suit_count[NUM_SUITS_IN_SUMMARY];  /* cards of each suit            */
+    int suit_mask[NUM_SUITS_IN_SUMMARY];   /* ranks present, per suit       */
+};
+
+/* An empty summary, describing no cards. */
+void card_summary_init(struct card_summary *summary);
+
+/* Adds one card, or a list of cards, to a summary. */
+void card_summary_add(struct card_summary *summary, int card);
+void card_summary_add_cards(struct card_summary *summary, const int *cards, int count);
+
+/* Scores whatever the summary describes. The summary must cover 5 to 7 cards;
+ * nothing checks that, and a summary built from fewer reads as a weaker hand
+ * rather than as an error. */
+int score_summary(const struct card_summary *summary);
 
 /* The category of a scored hand, i.e. the top four bits pulled back out. */
 static inline int score_category(int score) { return score >> 20; }
