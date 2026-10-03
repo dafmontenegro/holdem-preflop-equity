@@ -28,6 +28,8 @@ repository is the engine and the research behind it.
 | `equity_landscape_169_exact.csv` | Exact | The shape of that distribution per hand: how many opponent hands beat it, split with it, lose to it, and the spread in bands |
 | `beaten_by_k.csv` | Both | How many of n opponents hold a beating hand. Exact for 1 to 4 opponents, estimated for 5 to 8 |
 | `beaten_at_least_one.csv` | Both | The chance at least one of n opponents beats you, next to the independence shortcut it replaces |
+| `allin_call_exact.csv` | Exact | Whether calling an all-in makes money, by hand, the shover's range and the stack depth |
+| `allin_shove_exact.csv` | Exact | What shoving is worth, by hand, the caller's range and the stack depth, with the fold probability counted from the range |
 | `equity_169_vs_1to8_mc.csv` | Estimated | What each hand is worth against 1 to 8 opponents holding random hands, with wins, ties and losses counted separately |
 
 **Potential is not the probability of winning.** Potential says how often a
@@ -184,6 +186,7 @@ the check, I would have gone looking for a bug that was not there.
 | `src/headsup.c` | The exact 169 x 169 head-to-head matrix, and every distinct matchup |
 | `src/beaten.c` | How many opponents hold a hand that beats yours |
 | `tools/derive_ranges.py` | The hand ranking and the top X% ranges, derived from the matrix in exact rational arithmetic |
+| `tools/derive_allin.py` | The all-in decision, and the verdict on the "JJ+ and AK" rule |
 | `src/equity_mc.c` | Monte Carlo equity against 1 to 8 opponents |
 | `tools/verify_reproduction.py` | Checks the output against `exploration/` and across seeds |
 | `tools/crosscheck_treys.py` | Checks individual matchups against treys, an outside evaluator |
@@ -324,6 +327,74 @@ split, so a range asked for 5% actually covers 5.43%; the table records what
 each one really covers. Splitting a type would mean claiming an opponent plays
 AKo from three suit combinations and folds the fourth.
 
+### `allin_call_exact.csv` and `allin_shove_exact.csv`
+
+The situation modelled is heads-up, blind versus blind, both players holding
+the same stack of S big blinds — the canonical push-or-fold spot, chosen
+because it is the one that is exactly solvable and the one the "JJ+ and AK"
+rule is quoted about. Money is counted in **expected final stacks**, which
+sidesteps every argument about whether a posted blind is still yours: each row
+reports the difference between acting and folding, in big blinds.
+
+**Calling.** You are the big blind; the small blind is all-in for S, so
+calling costs S − 1 more and the pot becomes 2S.
+
+    EV(call) − EV(fold) = 2·S·q − (S − 1),    so you need  q* = (S − 1) / (2·S)
+
+That formula is why "you need 50% to call an all-in" is wrong. It is 40% at 5
+big blinds, 45% at 10, 47.5% at 20 and 49.5% at 100. The blinds are already in
+the pot and are not yours any more, and the shorter the stacks the larger a
+share of the pot they are.
+
+**Shoving.** You are the small blind, all-in for S. They fold with probability
+f, and otherwise call.
+
+    EV(shove) − EV(fold) = f·(S + 1) + (1 − f)·2·S·q − (S − 0.5)
+
+Note which q that is: equity **given that they called**, so measured against
+their calling range and not against a random hand. A shove earns from two
+different places, the folds and the called pots, and merging them is the usual
+way the calculation goes wrong.
+
+**f is counted, not guessed.** Once a calling range is named, the chance they
+fold is the chance their cards are not in it, and the deal counts already in
+the matrix give it exactly — including the blocker effect: holding AA removes
+five of the six ways they can hold AA, so a tight range is slightly less
+likely for them and f slightly larger. Holding AA they fold a top 5% range
+95.5102% of the time; holding 72o, 94.3673%.
+
+Each row also carries the **breakeven fold probability**. Where it reads
+`always`, the shove makes money however often they fold — the equity when
+called already carries it, and you would rather be called than folded to. That
+is not a curiosity: with aces at 5 big blinds against a 20% caller, being
+folded to is worth +1.500 bb and being called every time is worth +4.068 bb.
+Wanting a fold is a property of weak hands, not of shoving.
+
+**The verdict on "against an all-in, call only with JJ+ and AK".** Refuted in
+both directions, and `make data` prints the whole argument with the numbers.
+Against a tight shove it is too loose: facing a top 5% range, AKo is a
+profitable call only at 5 big blinds and AKs only up to 20, because the hands
+that beat AK against that range are precisely the hands such a player shoves.
+Against anything wider it is far too tight: facing a top 20% shove, 26 hands
+are profitable calls at 10 big blinds and 19 at 20, against the rule's six.
+A fixed list of hands cannot be right, because it names neither of the two
+things that decide the answer — the shover's range, which sets your equity,
+and the stack depth, which sets the equity you need. What survives is the
+rule's shape: pairs and ace-broadways do dominate every calling range here.
+
+**What the all-in model does not do.** No position beyond blind versus blind,
+no unequal stacks and therefore no side pots, no antes, no third player, and
+no tournament prize structure, so a chip is worth a chip and none of this is
+ICM. And the load-bearing one: **the opponent does not react.** Their range is
+a fixed input. That is most visible in the shove table, where at 10 big blinds
+against an opponent calling the top 20%, all 169 hands shove profitably, 32o
+included. The number is correct for the question asked and is not advice: an
+opponent who noticed would call much wider, and most of those shoves would
+stop working. Finding ranges that are stable against each other is a Nash
+equilibrium problem for the push-or-fold game, and this file does not solve
+it. It answers what a play is worth against *that* opponent, which is a more
+modest question.
+
 ## What this model assumes, and does not
 
 Opponents are dealt **uniformly random hands** and every hand goes to the
@@ -344,8 +415,5 @@ place where that difference is actually priced.
 
 ## Still to come
 
-- The preflop all-in decision: expected value with dead money, effective
-  stacks, and the probability that everyone folds as a parameter rather than a
-  guess.
 - A refined potential that requires at least one of the player's own cards to
   play, which is what `improves_board` only approximates today.
