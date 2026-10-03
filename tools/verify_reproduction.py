@@ -137,6 +137,53 @@ def describe_spread(z_scores, label, expected_spread_note):
     return mean, spread, largest
 
 
+def verify_refined_potential():
+    """Checks that the two potential programs agree about the same boards.
+
+    refined_potential.c enumerates the same 2,118,760 boards per hand as
+    potential.c and, among other things, counts the category of the best five
+    cards — exactly what potential.c counts. They share an evaluator but not a
+    line of enumeration code, so agreement on all 1,521 counts means the two
+    loops, written separately, visit the same boards and classify them the
+    same way.
+    """
+    print("\nRefined potential: does it agree with the plain potential?")
+
+    refined = {row["hand"]: row for row in read_csv(BUILD / "potential_refined_169_exact.csv")}
+    plain = {row["hand"]: row for row in read_csv(BUILD / "potential_169_exact.csv")}
+
+    categories = [
+        ("high card", "high_card"), ("pair", "pair"), ("two pair", "two_pair"),
+        ("three of a kind", "three_of_a_kind"), ("straight", "straight"),
+        ("flush", "flush"), ("full house", "full_house"),
+        ("four of a kind", "four_of_a_kind"), ("straight flush", "straight_flush"),
+    ]
+
+    mismatches = 0
+    counts = 0
+    for hand, row in refined.items():
+        for refined_name, plain_name in categories:
+            counts += 1
+            if int(row[f"best_{refined_name}"]) != int(plain[hand][plain_name]):
+                mismatches += 1
+
+    report(mismatches == 0,
+           f"all {counts} unrestricted counts match the plain potential exactly",
+           "" if mismatches == 0 else f"{mismatches} counts differ")
+
+    # Requiring a hole card can only weaken the hand, so "this category or
+    # better" must never be more likely under the restriction.
+    stronger = 0
+    for row in refined.values():
+        for index in range(len(categories)):
+            best = sum(int(row[f"best_{name}"]) for name, _ in categories[index:])
+            hole = sum(int(row[f"hole_{name}"]) for name, _ in categories[index:])
+            if hole > best:
+                stronger += 1
+    report(stronger == 0,
+           "requiring one of your own cards never makes the hand stronger")
+
+
 def verify_monte_carlo_errors():
     print("\nMonte Carlo: are the reported standard errors honest?")
 
@@ -279,6 +326,7 @@ def main():
             BUILD / "equity_169_vs_1to8_mc.csv",
             BUILD / "equity_169_vs_1to8_mc_seed2.csv",
             BUILD / "equity_169_vs_random_exact.csv",
+            BUILD / "potential_refined_169_exact.csv",
         )
         if not path.exists()
     ]
@@ -287,6 +335,7 @@ def main():
         return 1
 
     verify_exact_potential()
+    verify_refined_potential()
     verify_monte_carlo_errors()
     verify_exact_matrix()
 
