@@ -6,7 +6,7 @@
 # generators refuse to write a file whose own validation did not pass, so a
 # broken build cannot leave a plausible-looking CSV behind.
 #
-#   make           test, generate and verify: the whole thing
+#   make           test, generate and verify: the whole thing (about 11 minutes)
 #   make test      the evaluator's test suite, including the exhaustive checks
 #   make data      the published tables, into build/
 #   make verify    compare build/ against exploration/ and across seeds
@@ -16,6 +16,7 @@
 # so any table can be reproduced exactly:
 #
 #   make data MONTE_CARLO_TRIALS=1000000
+#   make data THREADS=4
 
 CC      ?= cc
 CFLAGS  ?= -O2 -std=c11 -Wall -Wextra
@@ -36,11 +37,17 @@ MONTE_CARLO_TRIALS ?= 100000
 SEED_PRIMARY   ?= 1
 SEED_SECONDARY ?= 2
 
-HEADERS := $(SRC)/cards.h $(SRC)/eval7.h $(SRC)/hands169.h $(SRC)/rng.h
+HEADERS := $(SRC)/cards.h $(SRC)/eval7.h $(SRC)/hands169.h $(SRC)/rng.h \
+           $(SRC)/suits.h
 
 DATA := $(BUILD)/potential_169_exact.csv \
         $(BUILD)/equity_169_vs_1to8_mc.csv \
-        $(BUILD)/equity_169_vs_1to8_mc_seed2.csv
+        $(BUILD)/equity_169_vs_1to8_mc_seed2.csv \
+        $(BUILD)/headsup_169x169_exact.csv
+
+# Worker threads for the head-to-head matrix, the only step that is
+# parallelised and the only one long enough to need it.
+THREADS ?= 8
 
 .PHONY: all test data verify clean
 .DEFAULT_GOAL := all
@@ -62,6 +69,9 @@ $(BIN)/potential: $(SRC)/potential.c $(SRC)/eval7.c $(HEADERS) | $(BIN)
 
 $(BIN)/equity_mc: $(SRC)/equity_mc.c $(SRC)/eval7.c $(HEADERS) | $(BIN)
 	$(CC) $(CFLAGS) -o $@ $(SRC)/equity_mc.c $(SRC)/eval7.c $(LDLIBS)
+
+$(BIN)/headsup: $(SRC)/headsup.c $(SRC)/eval7.c $(HEADERS) | $(BIN)
+	$(CC) $(CFLAGS) -pthread -o $@ $(SRC)/headsup.c $(SRC)/eval7.c
 
 # ---------------------------------------------------------------------------
 # Steps
@@ -87,6 +97,16 @@ $(BUILD)/equity_169_vs_1to8_mc.csv: $(BIN)/equity_mc | $(BUILD)
 
 $(BUILD)/equity_169_vs_1to8_mc_seed2.csv: $(BIN)/equity_mc | $(BUILD)
 	./$(BIN)/equity_mc $(MONTE_CARLO_TRIALS) $(SEED_SECONDARY) $@
+
+# Exact: enumerates every board of all 47,086 matchups left after suit
+# isomorphism and mirroring, and checks five invariants in integer arithmetic
+# before writing. The longest step by far, about 8 minutes on 8 threads. The
+# second file is one row of the matrix aggregated, so the two are written
+# together and cannot disagree.
+$(BUILD)/headsup_169x169_exact.csv $(BUILD)/equity_169_vs_random_exact.csv: $(BIN)/headsup | $(BUILD)
+	THREADS=$(THREADS) ./$(BIN)/headsup \
+	    $(BUILD)/headsup_169x169_exact.csv \
+	    $(BUILD)/equity_169_vs_random_exact.csv
 
 verify: $(DATA)
 	$(PYTHON) tools/verify_reproduction.py

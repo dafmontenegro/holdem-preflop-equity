@@ -37,6 +37,7 @@
 #define HANDS169_H
 
 #include <stdio.h>
+#include <stdlib.h>   /* exit, for the aborts below */
 
 #include "cards.h"
 
@@ -92,6 +93,30 @@ static inline int hand_types_all(struct hand_type *out)
         }
     }
     return count;
+}
+
+/* The index of the hand type two concrete cards belong to.
+ *
+ * Aborts on a hand that cannot exist, rather than returning a sentinel that a
+ * caller might use as an index: the two cards must be distinct, and every
+ * legal pair of distinct cards has a type.
+ */
+static inline int hand_type_of(const struct hand_type *types, int card1, int card2)
+{
+    int rank1 = RANK_OF(card1), rank2 = RANK_OF(card2);
+    int high = rank1 > rank2 ? rank1 : rank2;
+    int low  = rank1 > rank2 ? rank2 : rank1;
+    bool suited = (rank1 != rank2) && (SUIT_OF(card1) == SUIT_OF(card2));
+
+    for (int i = 0; i < NUM_HAND_TYPES; i++) {
+        if (types[i].high_rank == high && types[i].low_rank == low &&
+            types[i].suited == suited)
+            return i;
+    }
+
+    fprintf(stderr, "FAIL  cards %d and %d are not a legal starting hand\n",
+            card1, card2);
+    exit(1);
 }
 
 /* Writes the 50 cards that remain once a hand's two cards are removed.
