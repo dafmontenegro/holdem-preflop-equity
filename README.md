@@ -46,10 +46,13 @@ data; `requirements-dev.txt` is only for cross-checking results against
 outside evaluators and for rebuilding the reports.
 
 ```sh
-make            # test, generate and verify: the whole chain
-make test       # the evaluator's test suite
-make data       # the tables, into build/
-make verify     # compare build/ against exploration/ and across seeds
+make             # test, generate, repack and verify: the whole chain
+make test        # the evaluator's test suite
+make data        # the tables, into build/
+make web         # repack them into the files the website loads, into web/
+make verify      # compare build/ against exploration/ and across seeds
+make crosscheck  # check matchups against treys (needs requirements-dev.txt)
+make convergence # measure the simulation's error at three trial counts
 ```
 
 A full run from `make clean` takes about **18 minutes** on an Apple M1, of
@@ -205,7 +208,9 @@ the check, I would have gone looking for a bug that was not there.
 | `tools/crosscheck_treys.py` | Checks individual matchups against treys, an outside evaluator |
 | `tools/convergence_test.py` | Measures the simulation's error against the exact answers at three trial counts |
 | `exploration/` | The first exploration phase, kept for provenance |
-| `build/` | Generated tables. Not tracked: rebuild with `make data` |
+| `tools/build_web_data.py` | Repacks the tables into the files the website loads |
+| `build/` | Generated tables, the archive to check everything against. Not tracked: rebuild with `make data` |
+| `web/` | The same numbers repacked for the site, with a dictionary documenting every field. Tracked, because it is the exact data the site was served |
 
 Every header opens with a note on what it does and why it does it that way,
 including the reasoning behind the bit tricks and the two places where a
@@ -459,6 +464,45 @@ board by a kicker alone on 45.34% of boards, which is most of what it does.
 And 32o fails to improve on the board at all on **47.33%** of boards, against
 9.13% for 72o, because a three and a deuce lose to the board's own side cards
 while a seven often plays as one.
+
+## What the website is given
+
+GitHub Pages serves static files, so the site cannot run the engine. `make
+web` hands it a repack instead: two JSON files and the dictionary documenting
+every field of them. The repack adds no information — if a number appears
+there and not in `build/`, that is a bug — and it checks for exactly that
+before writing, re-testing the invariants that survived the reshaping: the
+nine categories still sum to one, every hand still classifies all 1,225
+opponent hands, the matrix is still its own mirror, and every hand's matrix
+row still averages back to its equity against a random hand.
+
+Three decisions are worth naming, because they are the only places the site's
+numbers can differ from the engine's.
+
+**Rounding.** Probabilities become integers in ten-thousandths, so 0.671234 is
+stored as 6712 — a hundredth of a percentage point. That is finer than
+anything the page displays and more than ten times finer than the simulation's
+own standard error of 0.0757. The packer measures the worst rounding it
+actually introduced and refuses to write if it exceeds half a ten-thousandth,
+which is the arithmetic limit of rounding to that precision. An exact figure
+stays exact in the sense that matters: it is rounded, not estimated, and by a
+bounded and reported amount.
+
+**What the browser computes rather than downloads.** The all-in tables are not
+shipped. Every entry is two lines of arithmetic over the equity against a
+range and the stack depth, both already being sent, so the page computes them
+live from the formulas. Smaller, and better to read: the stack becomes
+something the reader moves while watching the required equity move, instead of
+a column in a table. Nothing else is recomputed in the browser, because
+everything else is a count over billions of enumerated boards.
+
+**Two files, loaded at different times.** `hands.json` (135 KB) holds
+everything that is one number per hand — what the grid, the hand sheet and the
+trainer all need — and loads immediately. `headsup-matrix.json` (240 KB) holds
+the 28,561 cells only the hand-versus-hand calculator needs, so it loads on
+demand and nobody who never opens that calculator pays for it. Win and tie
+rates are both sent and losing is the remainder: not to save space, but so the
+page can show the three separately, which this project insists on everywhere.
 
 ## What this model assumes, and does not
 
