@@ -196,6 +196,78 @@ def verify_monte_carlo_errors():
            f"largest |z| is {largest:.2f}")
 
 
+# Equities of a few hands against one random opponent, as published in the
+# standard reference tables. Rounded to a tenth of a point, which is the
+# precision they are usually quoted to, so the comparison is made at that
+# precision and no tighter.
+PUBLISHED_VERSUS_RANDOM = {
+    "AA": 85.2, "KK": 82.4, "QQ": 79.9, "JJ": 77.5, "TT": 75.0,
+    "AKs": 67.0, "AKo": 65.3, "22": 50.3, "98s": 50.8, "72o": 34.6,
+}
+
+
+def verify_exact_matrix():
+    """Checks the exact matrix against the simulation and against outside figures.
+
+    The matrix validates its own invariants in integer arithmetic before it is
+    written, so what is left to check is whether it agrees with anything
+    outside itself. Two comparisons do that.
+
+    First, the Monte Carlo equity against one opponent now has an exact answer
+    to be measured against, which is a stronger test than comparing two
+    simulations: an estimate and the truth, divided by the estimate's own
+    standard error, should behave like a standard normal. This tests the
+    simulation and the error bars together, against a number that was not
+    sampled.
+
+    Second, a handful of hands have equities that have been published for
+    decades. Reproducing them to the tenth of a point they are quoted to ties
+    the whole chain — evaluator, enumeration, suit isomorphism, weighting — to
+    figures computed by other people with other code.
+    """
+    print("\nExact head-to-head matrix: against the simulation, and against published figures")
+
+    exact = {row["hand"]: row for row in read_csv(BUILD / "equity_169_vs_random_exact.csv")}
+    estimated = {
+        row["hand"]: row
+        for row in read_csv(BUILD / "equity_169_vs_1to8_mc.csv")
+        if row["opponents"] == "1"
+    }
+
+    report(len(exact) == 169, "the matrix yields all 169 hands against a random hand")
+
+    z_scores = []
+    for hand, row in exact.items():
+        truth = float(row["equity"])
+        estimate = float(estimated[hand]["equity"])
+        error = float(estimated[hand]["standard_error"])
+        z_scores.append((estimate - truth) / error)
+
+    mean, spread, largest = describe_spread(
+        z_scores, "the simulation against exact truth", ""
+    )
+    report(abs(mean) < 0.2, "the simulation is unbiased against the exact values",
+           f"mean z is {mean:+.4f}")
+    report(0.8 < spread < 1.25, "the simulation's error bars match its actual error",
+           f"standard deviation of z is {spread:.4f}")
+    report(largest < 5.0, "no hand is estimated further off than sampling explains",
+           f"largest |z| is {largest:.2f}")
+
+    print()
+    worst_gap = 0.0
+    for hand, published in PUBLISHED_VERSUS_RANDOM.items():
+        computed = float(exact[hand]["equity"]) * 100
+        gap = abs(computed - published)
+        worst_gap = max(worst_gap, gap)
+        print(f"    {hand:4s} computed {computed:6.3f} %   published {published:5.1f} %   "
+              f"gap {gap:.3f} pp")
+
+    report(worst_gap < 0.06,
+           f"all {len(PUBLISHED_VERSUS_RANDOM)} published equities are reproduced "
+           f"to the precision they are quoted to",
+           f"widest gap is {worst_gap:.3f} pp")
+
+
 def main():
     print("Verifying the engine's output")
     print("=============================")
@@ -206,6 +278,7 @@ def main():
             BUILD / "potential_169_exact.csv",
             BUILD / "equity_169_vs_1to8_mc.csv",
             BUILD / "equity_169_vs_1to8_mc_seed2.csv",
+            BUILD / "equity_169_vs_random_exact.csv",
         )
         if not path.exists()
     ]
@@ -215,6 +288,7 @@ def main():
 
     verify_exact_potential()
     verify_monte_carlo_errors()
+    verify_exact_matrix()
 
     print(f"\n{'All checks passed.' if not failures else str(len(failures)) + ' check(s) failed:'}")
     for failure in failures:
