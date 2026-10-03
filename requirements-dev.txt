@@ -1,15 +1,22 @@
-# Development only. Nothing here ships to the website, which serves precomputed
-# data as static files.
+# Development only. Nothing here ships to the website, which serves
+# precomputed data as static files, and nothing here is needed to generate the
+# data: `make` and `make verify` run on a C compiler and the standard library
+# alone.
 
-# Independent 7-card evaluator, used to cross-check the engine against an
-# outside implementation rather than only against its own invariants.
-eval7
-
-# Second independent evaluator, used by the scripts under exploration/scripts/.
+# Independent 7-card evaluator, used by tools/crosscheck_treys.py to check
+# individual matchups against code written by other people. Pure Python, so it
+# installs anywhere, and slow enough that the cross-check is a spot check of a
+# few matchups rather than a sweep.
 treys
 
-# Reports and spreadsheets
+# Reports and spreadsheets, for rebuilding the documents under exploration/.
 reportlab
 openpyxl
 matplotlib
 numpy
+
+# A faster independent evaluator, and the nicer option for cross-checking, but
+# it ships as a C extension and fails to build on some toolchains (it does on
+# this one, with Python 3.13). Left here because it is worth trying; treys is
+# the one the cross-check actually depends on.
+# eval7
