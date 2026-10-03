@@ -22,6 +22,8 @@ repository is the engine and the research behind it.
 | `potential_169_exact.csv` | Exact | How often each of the 169 starting hands finishes in each of the nine hand categories, over all 2,118,760 boards |
 | `headsup_169x169_exact.csv` | Exact | Wins, ties and losses for every ordered pair of starting hands, over every board. All 28,561 cells |
 | `equity_169_vs_random_exact.csv` | Exact | What each hand is worth against one opponent holding a random hand, aggregated from the matrix |
+| `hand_ranking_exact.csv` | Exact | The 169 hands ordered by equity against a random hand, with the cumulative share that defines the top X% ranges |
+| `equity_169_vs_ranges_exact.csv` | Exact | What each hand is worth against an opponent playing the top 5, 10, 15, 20, 30, 50 or 100% of hands |
 | `equity_169_vs_1to8_mc.csv` | Estimated | What each hand is worth against 1 to 8 opponents holding random hands, with wins, ties and losses counted separately |
 
 **Potential is not the probability of winning.** Potential says how often a
@@ -142,6 +144,7 @@ isomorphism through weighting, to other people's code.
 | `src/suits.h` | Renaming suits: the symmetry that makes the exact matrix feasible |
 | `src/potential.c` | Exact potential of the 169 hands |
 | `src/headsup.c` | The exact 169 x 169 head-to-head matrix |
+| `tools/derive_ranges.py` | The hand ranking and the top X% ranges, derived from the matrix in exact rational arithmetic |
 | `src/equity_mc.c` | Monte Carlo equity against 1 to 8 opponents |
 | `tools/verify_reproduction.py` | Checks the output against `exploration/` and across seeds |
 | `exploration/` | The first exploration phase, kept for provenance |
@@ -208,6 +211,29 @@ aggregated, not a separate calculation, so the two files cannot disagree.
 | `equity` | Exact equity against one opponent holding a uniformly random hand |
 | `win_rate`, `tie_rate` | Wins and ties as fractions of `boards`. Reported alongside equity because a hand that wins less but ties more is a different hand, and the single equity figure hides that: 98s and 22 are worth almost the same (50.80% against 50.33%) but 98s ties twice as often |
 
+### `hand_ranking_exact.csv` and `equity_169_vs_ranges_exact.csv`
+
+The ranking orders the 169 types by exact equity against a random hand, and
+carries the cumulative share of the 1,326 concrete hands, which is what
+defines a "top X%" range. The range table then gives each hand's exact equity
+against an opponent playing the top 5, 10, 15, 20, 30, 50 or 100% of hands.
+
+Both are sums of counts already in the matrix, computed in exact rational
+arithmetic, so both are exact. Equity against the top 100% must *equal*
+equity against a random hand, and the weighted average over all 1,326 hands
+must be exactly one half; the script checks both as equalities and refuses to
+write if either fails.
+
+**Two things about this ranking are choices, not facts.** Ordering by equity
+against a random hand is the only ordering here that is computed rather than
+asserted, which is why it was used, but it is not how strong players rank
+hands: it has no notion of position, stack depth or what happens after the
+flop, and it ranks 88 and 77 inside the top 5% while leaving every suited
+connector far down the list. And ranges are built from whole hand types, never
+split, so a range asked for 5% actually covers 5.43%; the table records what
+each one really covers. Splitting a type would mean claiming an opponent plays
+AKo from three suit combinations and folds the fourth.
+
 ## What this model assumes, and does not
 
 Opponents are dealt **uniformly random hands** and every hand goes to the
@@ -230,7 +256,6 @@ place where that difference is actually priced.
 
 - The distribution of how many opponents hold a hand that beats yours, without
   assuming independence between their hands.
-- A hand ranking and equity against opponents playing the top X% of hands.
 - The preflop all-in decision: expected value with dead money, effective
   stacks, and the probability that everyone folds as a parameter rather than a
   guess.
