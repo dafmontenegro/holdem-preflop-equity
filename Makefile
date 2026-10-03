@@ -9,6 +9,7 @@
 #   make           test, generate and verify: the whole thing (about 21 minutes)
 #   make test      the evaluator's test suite, including the exhaustive checks
 #   make data      the published tables, into build/ (enumerated and derived)
+#   make web       repack those tables into the files the website loads
 #   make verify    compare build/ against exploration/ and across seeds
 #   make crosscheck  check individual matchups against treys, an outside
 #                    evaluator. Needs requirements-dev.txt and takes about
@@ -38,14 +39,14 @@ BUILD := build
 # `make convergence` is what established that those two agree.
 MONTE_CARLO_TRIALS ?= 400000
 
-# Two seeds, because one run cannot check its own error bars. The second run
-# is an independent sample of the same quantities, and `make verify` compares
-# them cell by cell.
 # Simulation trials per cell for 5 to 8 opponents, where the exact method
 # runs out. At 200,000 the standard error of a probability is at most 0.11
 # percentage points.
 BEATEN_TRIALS ?= 200000
 
+# Two seeds, because one run cannot check its own error bars. The second run
+# is an independent sample of the same quantities, and `make verify` compares
+# them cell by cell.
 SEED_PRIMARY   ?= 1
 SEED_SECONDARY ?= 2
 
@@ -65,10 +66,14 @@ DATA := $(BUILD)/potential_169_exact.csv \
 # parallelised and the only one long enough to need it.
 THREADS ?= 8
 
-.PHONY: all test data verify crosscheck convergence clean
+# The files the website is served. Tracked in git, unlike build/, because the
+# site cannot run the engine and this is the exact data it was given.
+WEB := web/hands.json web/headsup-matrix.json web/DATA_DICTIONARY.md
+
+.PHONY: all test data web verify crosscheck convergence clean
 .DEFAULT_GOAL := all
 
-all: test data verify
+all: test data web verify
 
 # ---------------------------------------------------------------------------
 # Binaries
@@ -132,16 +137,29 @@ $(BUILD)/equity_169_vs_1to8_mc_seed2.csv: $(BIN)/equity_mc | $(BUILD)
 # matrix are enumerated rather than one being mirrored from the other, which
 # costs 7 of those minutes and turns the mirror relation into a check. The
 # three files are written together from one run and cannot disagree.
-$(BUILD)/headsup_169x169_exact.csv $(BUILD)/equity_169_vs_random_exact.csv \
-$(BUILD)/headsup_169_vs_1225_exact.csv: $(BIN)/headsup | $(BUILD)
+#
+# ONE COMMAND, SEVERAL FILES — AND WHY THE RULE IS WRITTEN THIS WAY
+#
+# A rule naming several targets does not mean "this command makes all of
+# them". Make expands it into one rule per target, each with the same command,
+# and runs the command once for every target that is out of date. For a step
+# that takes fourteen minutes, writing the obvious thing costs twenty-eight.
+#
+# So one file stands for the set, and the others are declared as depending on
+# it with no command of their own. `test -f` is there instead of a no-op so
+# that a missing file is an error rather than a silent success.
+$(BUILD)/headsup_169x169_exact.csv: $(BIN)/headsup | $(BUILD)
 	THREADS=$(THREADS) ./$(BIN)/headsup \
 	    $(BUILD)/headsup_169x169_exact.csv \
 	    $(BUILD)/equity_169_vs_random_exact.csv \
 	    $(BUILD)/headsup_169_vs_1225_exact.csv
 
+$(BUILD)/equity_169_vs_random_exact.csv $(BUILD)/headsup_169_vs_1225_exact.csv: \
+        $(BUILD)/headsup_169x169_exact.csv
+	@test -f $@
+
 # Exact for 1 to 4 opponents, estimated for 5 to 8. Checks the
 # inclusion-exclusion against brute force before writing.
-$(BUILD)/equity_landscape_169_exact.csv $(BUILD)/beaten_by_k.csv \
 $(BUILD)/beaten_at_least_one.csv: $(BIN)/beaten $(BUILD)/headsup_169_vs_1225_exact.csv
 	./$(BIN)/beaten \
 	    $(BUILD)/headsup_169_vs_1225_exact.csv \
@@ -150,19 +168,41 @@ $(BUILD)/beaten_at_least_one.csv: $(BIN)/beaten $(BUILD)/headsup_169_vs_1225_exa
 	    $(BUILD)/beaten_at_least_one.csv \
 	    $(BEATEN_TRIALS) $(SEED_PRIMARY)
 
+$(BUILD)/equity_landscape_169_exact.csv $(BUILD)/beaten_by_k.csv: \
+        $(BUILD)/beaten_at_least_one.csv
+	@test -f $@
+
 # Derived, not enumerated: the hand ranking and the top X% ranges are sums of
 # counts already in the exact matrix, so they are exact too. Done in exact
 # rational arithmetic, and the script validates itself before writing.
-$(BUILD)/hand_ranking_exact.csv $(BUILD)/equity_169_vs_ranges_exact.csv: \
+$(BUILD)/hand_ranking_exact.csv: \
         tools/derive_ranges.py $(BUILD)/headsup_169x169_exact.csv
 	$(PYTHON) tools/derive_ranges.py
 
+$(BUILD)/equity_169_vs_ranges_exact.csv: $(BUILD)/hand_ranking_exact.csv
+	@test -f $@
+
 # Derived: the all-in decision. Exact equities from the matrix, combined with
 # pot odds. Prints its verdict on the "call with JJ+ and AK" rule.
-$(BUILD)/allin_call_exact.csv $(BUILD)/allin_shove_exact.csv: \
+$(BUILD)/allin_call_exact.csv: \
         tools/derive_allin.py $(BUILD)/headsup_169x169_exact.csv \
         $(BUILD)/hand_ranking_exact.csv
 	$(PYTHON) tools/derive_allin.py
+
+$(BUILD)/allin_shove_exact.csv: $(BUILD)/allin_call_exact.csv
+	@test -f $@
+
+# The website cannot run the engine, so it is handed a repack: the same
+# numbers in the shape a page loads, plus the dictionary that documents every
+# field. It adds no information and computes no new result, and it checks that
+# against the tables it came from before writing anything.
+web: $(WEB)
+
+web/hands.json: tools/build_web_data.py $(DATA)
+	$(PYTHON) tools/build_web_data.py
+
+web/headsup-matrix.json web/DATA_DICTIONARY.md: web/hands.json
+	@test -f $@
 
 verify: $(DATA)
 	$(PYTHON) tools/verify_reproduction.py
@@ -179,5 +219,9 @@ crosscheck: $(BUILD)/headsup_169_vs_1225_exact.csv
 convergence: $(BIN)/equity_mc $(BUILD)/equity_169_vs_random_exact.csv
 	$(PYTHON) tools/convergence_test.py
 
+# Removes only what is untracked. web/ is left alone deliberately: those files
+# are in git, because the site cannot run the engine and they are the exact
+# data it was served, so deleting them here would leave the working tree dirty
+# for no reason. `make web` rewrites them.
 clean:
 	rm -rf $(BIN) $(BUILD)
