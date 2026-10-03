@@ -8,7 +8,7 @@
 #
 #   make           test, generate and verify: the whole thing (about 11 minutes)
 #   make test      the evaluator's test suite, including the exhaustive checks
-#   make data      the published tables, into build/
+#   make data      the published tables, into build/ (enumerated and derived)
 #   make verify    compare build/ against exploration/ and across seeds
 #   make clean     remove binaries and generated data
 #
@@ -43,7 +43,8 @@ HEADERS := $(SRC)/cards.h $(SRC)/eval7.h $(SRC)/hands169.h $(SRC)/rng.h \
 DATA := $(BUILD)/potential_169_exact.csv \
         $(BUILD)/equity_169_vs_1to8_mc.csv \
         $(BUILD)/equity_169_vs_1to8_mc_seed2.csv \
-        $(BUILD)/headsup_169x169_exact.csv
+        $(BUILD)/headsup_169x169_exact.csv \
+        $(BUILD)/hand_ranking_exact.csv
 
 # Worker threads for the head-to-head matrix, the only step that is
 # parallelised and the only one long enough to need it.
@@ -107,6 +108,13 @@ $(BUILD)/headsup_169x169_exact.csv $(BUILD)/equity_169_vs_random_exact.csv: $(BI
 	THREADS=$(THREADS) ./$(BIN)/headsup \
 	    $(BUILD)/headsup_169x169_exact.csv \
 	    $(BUILD)/equity_169_vs_random_exact.csv
+
+# Derived, not enumerated: the hand ranking and the top X% ranges are sums of
+# counts already in the exact matrix, so they are exact too. Done in exact
+# rational arithmetic, and the script validates itself before writing.
+$(BUILD)/hand_ranking_exact.csv $(BUILD)/equity_169_vs_ranges_exact.csv: \
+        tools/derive_ranges.py $(BUILD)/headsup_169x169_exact.csv
+	$(PYTHON) tools/derive_ranges.py
 
 verify: $(DATA)
 	$(PYTHON) tools/verify_reproduction.py
