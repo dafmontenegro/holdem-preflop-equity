@@ -20,6 +20,8 @@ repository is the engine and the research behind it.
 | Table | Kind | What it says |
 | --- | --- | --- |
 | `potential_169_exact.csv` | Exact | How often each of the 169 starting hands finishes in each of the nine hand categories, over all 2,118,760 boards |
+| `headsup_169x169_exact.csv` | Exact | Wins, ties and losses for every ordered pair of starting hands, over every board. All 28,561 cells |
+| `equity_169_vs_random_exact.csv` | Exact | What each hand is worth against one opponent holding a random hand, aggregated from the matrix |
 | `equity_169_vs_1to8_mc.csv` | Estimated | What each hand is worth against 1 to 8 opponents holding random hands, with wins, ties and losses counted separately |
 
 **Potential is not the probability of winning.** Potential says how often a
@@ -41,12 +43,14 @@ make data       # the tables, into build/
 make verify     # compare build/ against exploration/ and across seeds
 ```
 
-A full run from `make clean` takes about **2 minutes 45 seconds** on an Apple
-M1, single-threaded. Monte Carlo runs record their trial count and seed in the
+A full run from `make clean` takes about **11 minutes** on an Apple M1, of
+which 8 are the exact head-to-head matrix, the only step that is
+parallelised. Monte Carlo runs record their trial count and seed in the
 output, so any table can be reproduced exactly:
 
 ```sh
 make data MONTE_CARLO_TRIALS=1000000
+make data THREADS=4
 ```
 
 ## How correctness is established
@@ -91,6 +95,15 @@ cannot leave a plausible-looking CSV behind.
   value, at all eight table sizes, within sampling error. This constrains all
   169 hands jointly and catches a biased shuffle or a mis-weighted average,
   which per-hand plausibility would not.
+- *The exact matrix:* five invariants, all in integer arithmetic, because
+  nothing in the matrix is estimated and so there is no tolerance to choose.
+  A pair of types must have the same number of deals read in either
+  direction; every hand must face all 1,225 opponent hands; wins, ties and
+  losses must account for every board of every deal; a hand against its own
+  type must win and lose equally often, so it is worth exactly half the pot;
+  and the whole matrix must average to exactly one half, since neither of two
+  random hands has an advantage. The last one is checked as an equality
+  between two integers, both 2,781,381,002,400.
 
 **And then, from outside.** `make verify` compares the engine against the
 earlier exploration phase under `exploration/`, which was written
@@ -104,6 +117,19 @@ z of −0.02, standard deviation 1.03, 5.9% of cells beyond 1.96 and 1.3% beyond
 2.58, against the 5% and 1% expected. The standard errors are not a formula
 written next to the number; they describe the spread that is actually there.
 
+Since the matrix exists, the simulation can be held against the truth rather
+than against another simulation. Measuring the one-opponent estimates against
+the exact values, in units of each estimate's own standard error, gives a mean
+z of −0.008 and a standard deviation of 1.02: the simulation is unbiased and
+its error bars are the right size.
+
+And finally against figures nobody here computed. The equity of a hand against
+a random opponent has been published for decades, and the engine reproduces
+every one of the ten spot-checked hands to the tenth of a point they are
+quoted to — AA at 85.204%, AKo at 65.320%, 72o at 34.584% — with a widest gap
+of 0.045 percentage points. That ties the whole chain, evaluator through suit
+isomorphism through weighting, to other people's code.
+
 ## Layout
 
 | Path | What it holds |
@@ -113,7 +139,9 @@ written next to the number; they describe the spread that is actually there.
 | `src/hands169.h` | The 169 starting hand types, their combo counts and representatives |
 | `src/rng.h` | The random generator used by the Monte Carlo runs |
 | `src/test_eval7.c` | The evaluator's test suite |
+| `src/suits.h` | Renaming suits: the symmetry that makes the exact matrix feasible |
 | `src/potential.c` | Exact potential of the 169 hands |
+| `src/headsup.c` | The exact 169 x 169 head-to-head matrix |
 | `src/equity_mc.c` | Monte Carlo equity against 1 to 8 opponents |
 | `tools/verify_reproduction.py` | Checks the output against `exploration/` and across seeds |
 | `exploration/` | The first exploration phase, kept for provenance |
@@ -155,6 +183,31 @@ One row per hand type and opponent count, 169 × 8 = 1,352 rows. Estimated.
 
 The two header lines beginning with `#` record the seed.
 
+### `headsup_169x169_exact.csv`
+
+One row per ordered pair of hand types, 28,561 rows, 1.6 MB. Exact.
+
+| Column | Meaning |
+| --- | --- |
+| `hero`, `opponent` | The two hand types. Both orders are present, so the file can be read as a square matrix |
+| `deals` | Ordered pairs of concrete starting hands with these two types that share no card. Not the same in both directions of a pair until it is multiplied out, which is why it is recorded |
+| `boards` | Boards counted for this cell: `deals` x 1,712,304 |
+| `wins`, `ties`, `losses` | Boards on which the hero's hand was strictly better, equal, or beaten |
+| `equity` | `(2 x wins + ties) / (2 x boards)`. A head-to-head tie is always split two ways, so a tie is worth half a board |
+
+### `equity_169_vs_random_exact.csv`
+
+One row per hand type, 169 rows. Exact: this is a row of the matrix
+aggregated, not a separate calculation, so the two files cannot disagree.
+
+| Column | Meaning |
+| --- | --- |
+| `hand`, `family`, `combos` | As above |
+| `boards` | Boards behind the row: every board of every deal against all 1,225 opponent hands |
+| `wins`, `ties`, `losses` | Counted over those boards |
+| `equity` | Exact equity against one opponent holding a uniformly random hand |
+| `win_rate`, `tie_rate` | Wins and ties as fractions of `boards`. Reported alongside equity because a hand that wins less but ties more is a different hand, and the single equity figure hides that: 98s and 22 are worth almost the same (50.80% against 50.33%) but 98s ties twice as often |
+
 ## What this model assumes, and does not
 
 Opponents are dealt **uniformly random hands** and every hand goes to the
@@ -175,8 +228,6 @@ place where that difference is actually priced.
 
 ## Still to come
 
-- The exact head-to-head 169 × 169 matrix, by full board enumeration with suit
-  isomorphism, and the exact equity against a random hand derived from it.
 - The distribution of how many opponents hold a hand that beats yours, without
   assuming independence between their hands.
 - A hand ranking and equity against opponents playing the top X% of hands.
@@ -185,12 +236,3 @@ place where that difference is actually priced.
   guess.
 - A refined potential that requires at least one of the player's own cards to
   play, which is what `improves_board` only approximates today.
-
-### A known cost
-
-The exact potential takes 38 seconds here, against 11 for the exploration
-phase's program, because this evaluator resolves full kickers on every board
-where the old one only needed a category. That is the right trade for a single
-evaluator that is exhaustively validated, and it is paid once. The 169 × 169
-matrix is a different scale of work and will need the suit isomorphism and
-several threads; the design note will go with it.
