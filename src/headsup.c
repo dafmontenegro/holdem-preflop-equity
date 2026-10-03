@@ -29,10 +29,23 @@
  *    computed once and weighted by how many they stand for. 207,025 become
  *    93,769. Both reductions are explained in suits.h.
  *
- * 3. Only one of each pair of mirrored cells is computed: A against B gives B
- *    against A by swapping wins and losses. 93,769 become 47,086.
+ * A third reduction is available and deliberately NOT taken. A against B
+ * gives B against A by swapping wins and losses, which would halve the work
+ * to 47,086 matchups and about four minutes. Enumerating both halves instead
+ * costs eight minutes and buys something worth more than the four: the
+ * mirror relation becomes a *check* rather than an assumption. The two halves
+ * are genuinely independent calculations — A's representative against a
+ * concrete hand of type B is a different set of cards from B's representative
+ * against a concrete hand of type A — so their agreement tests the suit
+ * isomorphism, the orbit weighting and the scaling all at once. Computing one
+ * half and copying it would have tested none of them.
  *
- * A fourth saving is not a reduction in cases but in cost per case: the board
+ * Enumerating every matchup is also what produces the second output file: the
+ * exact equity of each hand against every one of the 1,225 hands an opponent
+ * can hold. That is the distribution behind a single equity figure, and the
+ * half that mirroring skips is exactly the half it would be missing.
+ *
+ * A third saving is not a reduction in cases but in cost per case: the board
  * is summarised as it is built, one card per loop level, so the innermost loop
  * adds a single card rather than re-reading five, and both players' hands are
  * scored from the same board summary. See eval7.h.
@@ -91,6 +104,7 @@ struct matchup {
 struct job {
     const struct hand_type *types;
     const struct matchup *matchups;
+    struct cell *results;        /* one per matchup, for the distribution file */
     int matchup_count;
 
     atomic_int next_matchup;
@@ -168,7 +182,10 @@ static void enumerate_matchup(const struct hand_type *hero,
 }
 
 /* A worker thread's private accumulator, merged into the matrix at the end so
- * that no two threads ever write the same memory. */
+ * that no two threads ever write the same memory. Per-matchup results go
+ * straight into the shared `results` array, which is safe without locking
+ * because each matchup is claimed by exactly one thread and written only at
+ * its own index. */
 struct worker {
     struct job *job;
     struct cell *matrix;    /* NUM_HAND_TYPES x NUM_HAND_TYPES */
@@ -189,6 +206,7 @@ static void *worker_run(void *argument)
 
         struct cell counts;
         enumerate_matchup(hero, matchup->opponent_cards, &counts);
+        job->results[index] = counts;
 
         /* Scale to all concrete deals: the representative opponent hand
          * speaks for `stands_for` opponent hands, and the hero's fixed
@@ -271,7 +289,7 @@ static int build_matchups(const struct hand_type *types,
                     break;
                 }
             }
-            if (already_seen || orbit_type[i] < hero_type)
+            if (already_seen)
                 continue;
 
             int stands_for = 0;
@@ -291,25 +309,46 @@ static int build_matchups(const struct hand_type *types,
     return count;
 }
 
-/* Fills the cells below the diagonal from their mirror above it.
+/* Checks that the matrix is its own mirror: A wins exactly when B loses, and
+ * they tie together.
  *
- * A wins exactly when B loses, and they tie together, so the mirrored cell is
- * the same counts with wins and losses swapped. This is exact rather than
- * approximate because the counts are scaled to all concrete deals, and a pair
- * of types has the same number of deals read in either direction.
+ * Because both halves were enumerated independently, this is a real test and
+ * not a restatement. Cell (A,B) was computed from A's representative against
+ * concrete hands of type B; cell (B,A) from B's representative against
+ * concrete hands of type A. Different cards, different orbits, different
+ * weights. They agree only if the suit isomorphism, the orbit sizes and the
+ * scaling to concrete deals are all correct, so a single mismatch anywhere in
+ * that chain shows up here.
+ *
+ * The comparison is between integers, with no tolerance, because the counts
+ * are scaled to all concrete deals of the pair and a pair has the same number
+ * of deals read in either direction.
  */
-static void mirror_lower_triangle(struct cell *matrix)
+static int count_mirror_mismatches(const struct hand_type *types,
+                                   const struct cell *matrix)
 {
+    int mismatches = 0;
+
     for (int a = 0; a < NUM_HAND_TYPES; a++) {
         for (int b = a + 1; b < NUM_HAND_TYPES; b++) {
-            const struct cell *above = &matrix[a * NUM_HAND_TYPES + b];
-            struct cell *below = &matrix[b * NUM_HAND_TYPES + a];
+            const struct cell *forward = &matrix[a * NUM_HAND_TYPES + b];
+            const struct cell *backward = &matrix[b * NUM_HAND_TYPES + a];
 
-            below->wins   = above->losses;
-            below->ties   = above->ties;
-            below->losses = above->wins;
+            if (forward->wins != backward->losses ||
+                forward->ties != backward->ties ||
+                forward->losses != backward->wins) {
+                if (mismatches < 5)
+                    fprintf(stderr, "  FAIL  %s vs %s: %lld/%lld/%lld against "
+                            "%s vs %s: %lld/%lld/%lld\n",
+                            types[a].label, types[b].label,
+                            forward->wins, forward->ties, forward->losses,
+                            types[b].label, types[a].label,
+                            backward->wins, backward->ties, backward->losses);
+                mismatches++;
+            }
         }
     }
+    return mismatches;
 }
 
 /* Checks the finished matrix. Every check is exact integer arithmetic: there
@@ -387,7 +426,20 @@ static bool validate(const struct hand_type *types, const struct cell *matrix,
         fprintf(stderr, "  ok    all 28,561 cells account for every board of every deal\n");
     }
 
-    /* 4. A hand against itself must be worth exactly half the pot. Two hands
+    /* 4. The matrix must be its own mirror. Both halves were enumerated
+     *    independently, so this tests the suit isomorphism, the orbit
+     *    weighting and the scaling rather than restating them. */
+    int mirror_mismatches = count_mirror_mismatches(types, matrix);
+    if (mirror_mismatches > 0) {
+        fprintf(stderr, "  FAIL  %d pairs of cells are not mirrors of each other\n",
+                mirror_mismatches);
+        all_passed = false;
+    } else {
+        fprintf(stderr, "  ok    the two independently enumerated halves agree: "
+                        "wins against losses in all 14,196 mirrored pairs\n");
+    }
+
+    /* 5. A hand against itself must be worth exactly half the pot. Two hands
      *    of the same type are mirror images of each other, so whatever one
      *    wins the other wins equally often. This is the one cell per row that
      *    the mirroring does not produce, so it is a real check on the
@@ -410,7 +462,7 @@ static bool validate(const struct hand_type *types, const struct cell *matrix,
         fprintf(stderr, "  ok    every hand is worth exactly half the pot against itself\n");
     }
 
-    /* 5. The whole matrix must average to exactly half the pot, because in a
+    /* 6. The whole matrix must average to exactly half the pot, because in a
      *    showdown between two random hands neither has an advantage.
      *
      *    In integers: equity is (2 x wins + ties) / (2 x total), so an average
@@ -497,6 +549,60 @@ static void write_versus_random(FILE *out, const struct hand_type *types,
     }
 }
 
+/* Writes the exact result of every matchup: each hand against every distinct
+ * hand an opponent can hold.
+ *
+ * WHY THIS FILE EXISTS
+ * --------------------
+ * "AKs is worth 67% against a random hand" is an average, and an average hides
+ * the shape of what it averages. Behind that one figure are 1,225 specific
+ * opponent hands, against some of which AKs is a heavy favourite and against
+ * others a heavy underdog. Questions that the single figure cannot answer at
+ * all — how many of the hands an opponent might hold actually beat mine, how
+ * often am I in a coin flip, what does the spread look like — are questions
+ * about this distribution.
+ *
+ * One row per orbit, not per opponent hand. Opponent hands that renaming the
+ * remaining suits maps onto each other have identical equity against the
+ * hero, so they share a row, and `stands_for` says how many of the 1,225 that
+ * row speaks for. Summing `stands_for` across a hero's rows gives 1,225
+ * exactly, which the reader can check and the derivation does check.
+ *
+ * Counts here are per deal, unscaled: each row is over the 1,712,304 boards
+ * of one concrete matchup. The matrix file is the scaled aggregate of these.
+ */
+static void write_distribution(FILE *out, const struct hand_type *types,
+                               const struct matchup *matchups,
+                               const struct cell *results, int matchup_count)
+{
+    fprintf(out, "# Exact result of every distinct preflop matchup: each of the 169 "
+                 "starting hands\n");
+    fprintf(out, "# against every hand an opponent can hold, grouped into orbits of "
+                 "equivalent hands.\n");
+    fprintf(out, "# Complete enumeration of all %ld boards per row. No sampling.\n",
+            BOARDS_PER_MATCHUP);
+    fprintf(out, "hero,opponent_cards,opponent_hand,stands_for,boards,"
+                 "wins,ties,losses,equity\n");
+
+    for (int i = 0; i < matchup_count; i++) {
+        const struct matchup *matchup = &matchups[i];
+        const struct cell *counts = &results[i];
+
+        char first[3], second[3];
+        card_format(matchup->opponent_cards[0], first);
+        card_format(matchup->opponent_cards[1], second);
+
+        long long boards = counts->wins + counts->ties + counts->losses;
+
+        fprintf(out, "%s,%s%s,%s,%d,%lld,%lld,%lld,%lld,%.9f\n",
+                types[matchup->hero_type].label, first, second,
+                types[matchup->opponent_type].label, matchup->stands_for,
+                boards, counts->wins, counts->ties, counts->losses,
+                (2.0 * (double)counts->wins + (double)counts->ties)
+                    / (2.0 * (double)boards));
+    }
+}
+
 static int thread_count_default(void)
 {
     const char *from_environment = getenv("THREADS");
@@ -515,15 +621,17 @@ int main(int argc, char **argv)
     int benchmark_matchups = 0;
     const char *matrix_path = NULL;
     const char *versus_random_path = NULL;
+    const char *distribution_path = NULL;
 
     if (argc > 2 && strcmp(argv[1], "--benchmark") == 0) {
         benchmark_matchups = atoi(argv[2]);
-    } else if (argc > 2) {
+    } else if (argc > 3) {
         matrix_path = argv[1];
         versus_random_path = argv[2];
+        distribution_path = argv[3];
     } else {
         fprintf(stderr,
-                "usage: %s matrix.csv versus_random.csv\n"
+                "usage: %s matrix.csv versus_random.csv distribution.csv\n"
                 "       %s --benchmark N\n\n"
                 "  Set THREADS to change the number of worker threads "
                 "(default 8).\n", argv[0], argv[0]);
@@ -534,9 +642,10 @@ int main(int argc, char **argv)
     hand_types_all(types);
 
     struct matchup *matchups = malloc(sizeof *matchups * 120000);
+    struct cell *results = calloc(120000, sizeof *results);
     long long *deals = calloc(NUM_HAND_TYPES * NUM_HAND_TYPES, sizeof *deals);
     struct cell *matrix = calloc(NUM_HAND_TYPES * NUM_HAND_TYPES, sizeof *matrix);
-    if (matchups == NULL || deals == NULL || matrix == NULL) {
+    if (matchups == NULL || results == NULL || deals == NULL || matrix == NULL) {
         fprintf(stderr, "FAIL  out of memory\n");
         return 1;
     }
@@ -544,12 +653,12 @@ int main(int argc, char **argv)
     int matchup_count = build_matchups(types, matchups, deals);
 
     fprintf(stderr, "Exact head-to-head matrix of the 169 starting hands\n");
-    fprintf(stderr, "  %d cells, from %d matchups after suit isomorphism and "
-                    "mirroring\n", NUM_HAND_TYPES * NUM_HAND_TYPES, matchup_count);
+    fprintf(stderr, "  %d cells, from %d distinct matchups after suit isomorphism\n", NUM_HAND_TYPES * NUM_HAND_TYPES, matchup_count);
     fprintf(stderr, "  %ld boards each, %.0f billion hand evaluations\n",
             BOARDS_PER_MATCHUP,
             (double)matchup_count * BOARDS_PER_MATCHUP * 2 / 1e9);
 
+    int total_matchups = matchup_count;
     if (benchmark_matchups > 0 && benchmark_matchups < matchup_count)
         matchup_count = benchmark_matchups;
 
@@ -559,6 +668,7 @@ int main(int argc, char **argv)
     struct job job = {
         .types = types,
         .matchups = matchups,
+        .results = results,
         .matchup_count = matchup_count,
     };
     atomic_init(&job.next_matchup, 0);
@@ -605,14 +715,13 @@ int main(int argc, char **argv)
             matchup_count, seconds, evaluations / seconds / 1e6);
 
     if (benchmark_matchups > 0) {
-        double full = (double)seconds / matchup_count * 47086;
+        double full = (double)seconds / matchup_count * (double)total_matchups;
         fprintf(stderr, "At this rate the full matrix takes %.1f minutes.\n",
                 full / 60.0);
         return 0;
     }
 
-    fprintf(stderr, "\nMirroring the lower triangle and validating:\n");
-    mirror_lower_triangle(matrix);
+    fprintf(stderr, "\nValidating:\n");
 
     if (!validate(types, matrix, deals)) {
         fprintf(stderr, "\nValidation failed. No output written: this matrix is "
@@ -637,6 +746,15 @@ int main(int argc, char **argv)
     write_versus_random(out, types, matrix);
     fclose(out);
     fprintf(stderr, "Wrote %s\n", versus_random_path);
+
+    out = fopen(distribution_path, "w");
+    if (out == NULL) {
+        fprintf(stderr, "FAIL  cannot write %s\n", distribution_path);
+        return 1;
+    }
+    write_distribution(out, types, matchups, results, matchup_count);
+    fclose(out);
+    fprintf(stderr, "Wrote %s\n", distribution_path);
 
     return 0;
 }
