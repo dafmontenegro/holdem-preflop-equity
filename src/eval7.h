@@ -159,4 +159,13 @@ int score_summary(const struct card_summary *summary);
 /* The category of a scored hand, i.e. the top four bits pulled back out. */
 static inline int score_category(int score) { return score >> 20; }
 
+/* The hand's defining rank: the most significant tiebreak within its
+ * category. The rank of the pair, of the trips, of the quads, of the top card
+ * of a straight, or the highest card of a flush or a high-card hand.
+ *
+ * Reading it separately is what lets a caller tell apart the two ways a hand
+ * can beat another of the same category: a bigger pair, which changes what
+ * the hand is, and a better side card, which does not. */
+static inline int score_defining_rank(int score) { return (score >> 16) & 0xF; }
+
 #endif /* EVAL7_H */
