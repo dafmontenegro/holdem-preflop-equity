@@ -1,0 +1,10 @@
+# Compiled engine binaries
+/bin/
+*.o
+
+# Generated data and reports (rebuild with `make`)
+/build/
+
+# Python
+__pycache__/
+.venv/

@@ -1,0 +1,15 @@
+# Development only. Nothing here ships to the website, which serves precomputed
+# data as static files.
+
+# Independent 7-card evaluator, used to cross-check the engine against an
+# outside implementation rather than only against its own invariants.
+eval7
+
+# Second independent evaluator, used by the scripts under exploration/scripts/.
+treys
+
+# Reports and spreadsheets
+reportlab
+openpyxl
+matplotlib
+numpy
