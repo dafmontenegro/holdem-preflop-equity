@@ -17,10 +17,17 @@ slate. It reads instantly at any size, it says "poker" before a word is read,
 and the thing it depicts is the best hand in the deck, which the page then
 spends a section explaining is beaten by nothing at all.
 
-The grid is still there, behind the cards, at low contrast. Up close it is the
-real shading of the real data, which is what the page is about; at thumbnail
-size it is texture. It earns its place by being true rather than by being
-legible.
+The grid is still there, behind the cards. Up close it is the real shading of
+the real data, which is what the page is about; at thumbnail size it is
+texture. It earns its place by being true rather than by being legible.
+
+It also fills the frame, edge to edge, and that is not a taste decision. The
+site's own background is this same slate, so a cover with slate margins has
+invisible edges: in the projects list it stopped looking like an image and
+started looking like a small square floating in the page, next to neighbours
+that fill their box. Filling the canvas is what makes it read as a picture.
+The cells are stretched to the 4:3 of the frame rather than kept square, which
+costs nothing — behind two cards it is texture, and all 169 are still there.
 
 No number is printed. A cover cannot be checked, hovered or read aloud, so it
 makes no claim that the page does not make properly, with its method attached.
@@ -83,7 +90,7 @@ def draw_background_grid(axes, equity, colours, geometry):
             (left + column * cell_w + gap_w / 2,
              bottom + (12 - row) * cell_h + gap_h / 2),
             cell_w - gap_w, cell_h - gap_h,
-            facecolor=colours(fraction), edgecolor="none", alpha=0.30,
+            facecolor=colours(fraction), edgecolor="none", alpha=0.55,
             transform=axes.transAxes, clip_on=False, zorder=1))
 
 
@@ -144,14 +151,14 @@ def main():
     axes.set_facecolor(SURFACE)
     axes.set_axis_off()
 
-    # Geometry for the background grid. Axes fractions are fractions of each
-    # dimension and the canvas is 4:3, so a cell that is square on screen needs
-    # a different fraction of the width than of the height.
-    side = height_inches / 13 * 0.92
-    cell_w, cell_h = side / width_inches, side / height_inches
-    gap = 0.045
-    geometry = (0.5 - cell_w * 13 / 2, 0.5 - cell_h * 13 / 2,
-                cell_w, cell_h, gap / width_inches, gap / height_inches)
+    # The grid fills the whole canvas: 13 columns across the full width and 13
+    # rows down the full height, so the cells take the frame's 4:3 rather than
+    # staying square. See the note at the top of this file for why filling
+    # matters more here than square cells do.
+    cell_w, cell_h = 1.0 / 13, 1.0 / 13
+    gap = 0.05
+    geometry = (0.0, 0.0, cell_w, cell_h,
+                gap / width_inches, gap / height_inches)
 
     draw_background_grid(axes, equity, colours, geometry)
 
